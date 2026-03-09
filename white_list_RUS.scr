@@ -1,126 +1,40 @@
-# ==============================
-# White List Straight routes
-# ==============================
+:local url "https://linux-administrator.ru/wl/wl.txt"
+:local file "wl.txt"
+:local list "WL_SERVICES"
 
-:local mainInterface "pppoe-out1"
-:local listUrl "https://linux-administrator.ru/wl/wl.txt"
-:local tmpFile "wl.txt"
+:log info "WL: update started"
 
-:local mainList "WL_SERVICES"
-:local tempList "WL_SERVICES_TMP"
-
-:log info "WL-ENT: Starting update"
-
-# ==============================
-# DOWNLOAD DOMAIN LIST
-# ==============================
-
-/tool fetch url=$listUrl dst-path=$tmpFile mode=https keep-result=yes
+/tool fetch url=$url dst-path=$file keep-result=yes
 :delay 2s
 
-:if ([:len [/file find name=$tmpFile]] = 0) do={
-    :log error "WL-ENT: Download failed"
-    :error "Download failed"
-}
+:local content [/file get $file contents]
 
-:local content [/file get $tmpFile contents]
+/ip firewall address-list remove [find list=$list]
 
-# ==============================
-# SPLIT INTO LINES
-# ==============================
-
-:local domains [:toarray ""]
 :local start 0
 
 :while (true) do={
 
     :local end [:find $content "\n" $start]
 
-    :if ($end = -1) do={
-        :set domains ($domains, [:pick $content $start [:len $content]])
-        :break
+    :if ($end = nil) do={
+        :set end [:len $content]
     }
 
-    :set domains ($domains, [:pick $content $start $end])
+    :local domain [:pick $content $start $end]
+
     :set start ($end + 1)
-}
 
-# ==============================
-# CLEAN TEMP LIST
-# ==============================
+    :if ([:len $domain] > 3) do={
 
-/ip firewall address-list remove [find list=$tempList]
-
-# ==============================
-# PROCESS DOMAINS (MULTI-IP)
-# ==============================
-
-:foreach d in=$domains do={
-
-    :local domain [:trim $d]
-    :if ($domain = "") do={ :continue }
-
-    :log info ("WL-ENT: Resolving " . $domain)
-
-    # Resolve all A records
-    :local resolved [:resolve $domain]
-
-    :if ($resolved = "") do={
-        :log warning ("WL-ENT: Cannot resolve " . $domain)
-        :continue
-    }
-
-    # RouterOS returns one IP per resolve
-    # So we use DNS cache to collect all
-
-    :delay 1s
-
-    :foreach dnsEntry in=[/ip dns cache find where name=$domain and type="A"] do={
-
-        :local ip [/ip dns cache get $dnsEntry address]
-
-        :if ($ip = "") do={ :continue }
-
-        :log info ("WL-ENT: Found IP " . $ip)
-
-        # Ping
-        :local pingResult [/ping address=$ip interface=$mainInterface count=3]
-
-        :if ($pingResult = 0) do={
-            :log warning ("WL-ENT: " . $ip . " unreachable ")
-            :continue
-        }
-
-        # Add to TEMP list
         /ip firewall address-list add \
-            list=$tempList \
-            address=$ip \
-            comment=("AUTO_" . $domain)
+        list=$list \
+        address=$domain \
+        comment="AUTO_DOMAIN"
+
     }
+
+    :if ($end = [:len $content]) do={ :break }
 }
 
-# ==============================
-# ATOMIC SWITCH
-# ==============================
-
-:log info "WL-ENT: Performing atomic switch"
-
-# Remove old main list
-/ip firewall address-list remove [find list=$mainList]
-
-# Move temp → main
-:foreach entry in=[/ip firewall address-list find list=$tempList] do={
-
-    :local ip [/ip firewall address-list get $entry address]
-    :local comment [/ip firewall address-list get $entry comment]
-
-    /ip firewall address-list add \
-        list=$mainList \
-        address=$ip \
-        comment=$comment
-}
-
-# Clear temp
-/ip firewall address-list remove [find list=$tempList]
-
-:log info "WL-ENT: Update completed successfully"
+:log info "WL: update finished"
