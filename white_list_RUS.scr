@@ -1,7 +1,6 @@
 :local url "https://linux-administrator.ru/wl/wl.txt"
 :local file "wl.txt"
 :local list "WL_SERVICES"
-
 :log info "WL: update started"
 
 /tool fetch url=$url dst-path=$file keep-result=yes
@@ -9,32 +8,32 @@
 
 :local content [/file get $file contents]
 
-/ip firewall address-list remove [find list=$list]
+:foreach i in=[/ip firewall address-list find list=$list] do={
+    :do {
+        /ip firewall address-list remove $i
+    } on-error={}
+}
 
 :local start 0
+:local contentLen [:len $content]
 
-:while (true) do={
-
+:while ($start < $contentLen) do={
     :local end [:find $content "\n" $start]
-
     :if ($end = nil) do={
-        :set end [:len $content]
+        :set end $contentLen
     }
-
     :local domain [:pick $content $start $end]
-
-    :set start ($end + 1)
-
-    :if ([:len $domain] > 3) do={
-
-        /ip firewall address-list add \
-        list=$list \
-        address=$domain \
-        comment="AUTO_DOMAIN"
-
+    :if ([:pick $domain ([:len $domain] - 1) [:len $domain]] = "\r") do={
+        :set domain [:pick $domain 0 ([:len $domain] - 1)]
     }
-
-    :if ($end = [:len $content]) do={ :break }
+    :if ([:len $domain] > 3) do={
+        :do {
+            /ip firewall address-list add list=$list address=$domain comment="AUTO_DOMAIN"
+        } on-error={
+            :log warning "WL: skipped: $domain"
+        }
+    }
+    :set start ($end + 1)
 }
 
 :log info "WL: update finished"
